@@ -74,8 +74,9 @@
 
         const MY_ALLOWED_EMAIL = "nil000nilesh@gmail.com"; 
         
-        // --- 🔴 PASTE YOUR OPENAI API KEY HERE 🔴 ---
-        const FIXED_OPENAI_KEY = "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"; 
+        // --- SECURITY: DO NOT PASTE KEY HERE FOR GITHUB ---
+        // Use the 'Settings' menu in the App UI to save the key safely in your browser.
+        const FIXED_OPENAI_KEY = ""; 
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
@@ -101,7 +102,7 @@
 
         // --- SMART AI LOGIC (Conversational) ---
         const processWithChatAI = async (chatHistory, apiKey, masterKey, existingClients) => {
-            if (!apiKey) throw new Error("API Key Missing");
+            if (!apiKey) throw new Error("API Key Missing. Go to Settings to add it.");
 
             const clientsList = existingClients.map(c => `${c.name} (Status: ${c.fileStatus})`).join(", ");
             
@@ -193,6 +194,7 @@
             const [inputText, setInputText] = useState("");
             const [aiProcessing, setAiProcessing] = useState(false);
             
+            // API Key Logic: Check Fixed Key first, then LocalStorage
             const [apiKey, setApiKey] = useState(FIXED_OPENAI_KEY || localStorage.getItem('openai_api_key') || "");
             const [sidebarOpen, setSidebarOpen] = useState(false);
             const chatEndRef = useRef(null);
@@ -435,7 +437,7 @@
                     }
 
                 } catch (error) {
-                    setChatHistory(prev => [...prev, { role: 'ai', text: `Error: ${error.message}. Check API Key.` }]);
+                    setChatHistory(prev => [...prev, { role: 'ai', text: `Error: ${error.message}. Check Settings > API Key.` }]);
                 } finally {
                     setAiProcessing(false);
                 }
@@ -514,6 +516,17 @@
                             {currentView === 'clients' && <ClientsView clients={clients} deleteItem={deleteItem} handleAddClient={handleAddClient} />}
                             {currentView === 'vault' && <VaultView items={items} deleteItem={deleteItem} />}
                             {currentView === 'history' && <HistoryView items={items} />}
+                            {currentView === 'settings' && (
+                                <div className="max-w-md mx-auto bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="flex items-center gap-3 mb-6">
+                                        <div className="bg-purple-100 p-2 rounded-lg text-purple-600"><BrainCircuit size={24}/></div>
+                                        <h3 className="font-bold text-lg">Configuration</h3>
+                                    </div>
+                                    <label className="block text-sm font-bold text-slate-600 mb-2">OpenAI API Key</label>
+                                    <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl mb-4 focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all" placeholder="sk-..."/>
+                                    <button onClick={()=>{localStorage.setItem('openai_api_key', apiKey); alert("Saved")}} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all">Save Key</button>
+                                </div>
+                            )}
                         </div>
 
                         {/* CHAT INTERFACE (Replaces Magic Input) */}
@@ -699,7 +712,7 @@
         };
 
         const NavBtn = ({ id, icon: Icon, label, current, set }) => (
-            <button onClick={()=>set(id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${current===id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+            <button onClick={()=>{set(id); if(id==='settings') setTimeout(()=>alert('To add API Key, go to Settings'),100)}} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${current===id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
                 <Icon size={20}/> <span>{label}</span>
                 {current===id && <ChevronRight size={16} className="ml-auto opacity-50"/>}
             </button>
