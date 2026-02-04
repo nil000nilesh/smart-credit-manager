@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Credit Manager</title>
+    <meta name="theme-color" content="#0f172a">
+    <link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiU21hcnQgQ3JlZGl0IE1hbmFnZXIiLCJzaG9ydF9uYW1lIjoiQ00gVmF1bHQiLCJzdGFydF91cmwiOiIvIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiIzBmMTcyYSIsInRoZW1lX2NvbG9yIjoiIzBmMTcyYSIsImljb25zIjpW11fQ==">
+    
+    <!-- 1. Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. Crypto JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+
+    <!-- 3. Babel -->
+    <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
+
+    <!-- 4. Import Map -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js",
+        "lucide-react": "https://esm.sh/lucide-react@0.292.0"
+      }
+    }
+    </script>
+
+    <style>
+        body { background-color: #f8fafc; touch-action: manipulation; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
+        /* Hide scrollbar for cleaner UI */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- MAIN REACT APPLICATION -->
+    <script type="text/babel" data-type="module" data-presets="react">
+        import React, { useState, useEffect } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { initializeApp } from 'firebase/app';
+        import { 
+            getAuth, 
+            onAuthStateChanged, 
+            signInWithPopup,
+            GoogleAuthProvider,
+            signOut
+        } from 'firebase/auth';
+        import { 
+            getFirestore, 
+            collection, 
+            addDoc, 
+            query, 
+            orderBy, 
+            onSnapshot, 
+            updateDoc, 
+            doc, 
+            serverTimestamp, 
+            deleteDoc 
+        } from 'firebase/firestore';
+        import { 
+            Lock, Unlock, Send, FileText, Users, Key, StickyNote, 
+            History, Settings, LogOut, Plus, ShieldCheck, BrainCircuit, 
+            X, Menu, CheckCircle, Clock, AlertTriangle, LogIn, ChevronRight
+        } from 'lucide-react';
+
+        // --- 1. CONFIGURATION ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBz9bUrnOMu6I_OQ2cTHsRbVJUGlNs9c_E",
+            authDomain: "wisfox-lead-app.firebaseapp.com",
+            projectId: "wisfox-lead-app",
+            storageBucket: "wisfox-lead-app.firebasestorage.app",
+            messagingSenderId: "54162755199",
+            appId: "1:54162755199:web:80ebc15aae5584383bb94a"
+        };
+
+        // --- SECURITY: ONLY THIS EMAIL CAN LOGIN ---
+        const MY_ALLOWED_EMAIL = "nil000nilesh@gmail.com"; 
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = "credit-manager-v1"; 
+
+        // --- 2. ENCRYPTION HELPERS ---
+        const encryptData = (text, masterKey) => {
+            if (!text || !masterKey || !window.CryptoJS) return text;
+            return window.CryptoJS.AES.encrypt(text, masterKey).toString();
+        };
+
+        const decryptData = (cipherText, masterKey) => {
+            if (!cipherText || !masterKey || !window.CryptoJS) return cipherText;
+            try {
+                const bytes = window.CryptoJS.AES.decrypt(cipherText, masterKey);
+                const originalText = bytes.toString(window.CryptoJS.enc.Utf8);
+                return originalText || '*** Encrypted ***';
+            } catch (e) {
+                return '*** Error Decrypting ***';
+            }
+        };
+
+        // --- 3. AI LOGIC ---
+        const processWithAI = async (text, apiKey, masterKey) => {
+            if (!apiKey) throw new Error("Please add OpenAI API Key in Settings");
+
+            const systemPrompt = `
+                You are a smart assistant for a Bank Credit Manager. 
+                Analyze the user's unstructured text and categorize it.
+                Return ONLY a JSON object with this structure:
+                {
+                "type": "assignment" | "note" | "contact" | "password",
+                "title": "Short summary",
+                "content": "Detailed content",
+                "priority": "high" | "medium" | "low",
+                "dueDate": "YYYY-MM-DD" (if applicable, else null),
+                "clientName": "Name if mentioned" (else null),
+                "action": "create"
+                }
+                For passwords, just identify the username/password structure in content.
+            `;
+
+            try {
+                const response = await fetch("https://api.openai.com/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: "gpt-4o-mini",
+                    messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: text }
+                    ],
+                    response_format: { type: "json_object" }
+                })
+                });
+
+                const data = await response.json();
+                if(!data.choices) throw new Error("AI API Error: Check Key");
+                const result = JSON.parse(data.choices[0].message.content);
+                return result;
+            } catch (error) {
+                console.error("AI Error:", error);
+                throw error;
+            }
+        };
+
+        // --- 4. MAIN COMPONENT ---
+        const MainApp = () => {
+            const [user, setUser] = useState(null);
+            const [masterKey, setMasterKey] = useState("");
+            const [isKeySet, setIsKeySet] = useState(false);
+            const [loading, setLoading] = useState(true);
+            const [authError, setAuthError] = useState(null);
+            
+            const [currentView, setCurrentView] = useState('dashboard');
+            const [items, setItems] = useState([]);
+            const [inputText, setInputText] = useState("");
+            const [aiProcessing, setAiProcessing] = useState(false);
+            const [apiKey, setApiKey] = useState(localStorage.getItem('openai_api_key') || "");
+            const [sidebarOpen, setSidebarOpen] = useState(false);
+
+            useEffect(() => {
+                const unsubscribe = onAuthStateChanged(auth, (u) => {
+                    setLoading(false);
+                    if (u) {
+                        if (u.email !== MY_ALLOWED_EMAIL) {
+                            setAuthError(`Access Denied: ${u.email} is not authorized.`);
+                            signOut(auth);
+                            setUser(null);
+                        } else {
+                            setUser(u);
+                            setAuthError(null);
+                        }
+                    } else {
+                        setUser(null);
+                    }
+                });
+                return () => unsubscribe();
+            }, []);
+
+            useEffect(() => {
+                if (!user || !isKeySet) return;
+                const q = query(
+                    collection(db, 'artifacts', appId, 'users', user.uid, 'items'),
+                    orderBy('createdAt', 'desc')
+                );
+                const unsub = onSnapshot(q, (snapshot) => {
+                    const fetched = snapshot.docs.map(d => {
+                        const data = d.data();
+                        return {
+                            id: d.id,
+                            ...data,
+                            title: decryptData(data.title, masterKey),
+                            content: decryptData(data.content, masterKey),
+                            clientName: data.clientName ? decryptData(data.clientName, masterKey) : ''
+                        };
+                    });
+                    setItems(fetched);
+                });
+                return () => unsub();
+            }, [user, isKeySet, masterKey]);
+
+            const handleGoogleLogin = async () => {
+                const provider = new GoogleAuthProvider();
+                try {
+                    setAuthError(null);
+                    await signInWithPopup(auth, provider);
+                } catch (error) {
+                    console.error("Login Error:", error);
+                    let msg = error.message;
+                    if(error.code === 'auth/unauthorized-domain') msg = "Domain not authorized in Firebase Console.";
+                    setAuthError(msg);
+                }
+            };
+
+            const handleLogout = () => {
+                if(confirm("Sign out? Your PIN session will end.")){
+                    signOut(auth);
+                    setIsKeySet(false);
+                    setMasterKey("");
+                }
+            };
+
+            const handleSetMasterKey = (e) => {
+                e.preventDefault();
+                if (masterKey.length < 4) {
+                    alert("PIN must be at least 4 digits");
+                    return;
+                }
+                setIsKeySet(true);
+            };
+
+            const handleMagicSubmit = async (e) => {
+                e.preventDefault();
+                if (!inputText.trim()) return;
+                
+                setAiProcessing(true);
+                try {
+                    let aiResult;
+                    if (apiKey) {
+                        aiResult = await processWithAI(inputText, apiKey, masterKey);
+                    } else {
+                        aiResult = {
+                            type: 'note',
+                            title: 'Quick Note',
+                            content: inputText,
+                            priority: 'medium',
+                            action: 'create'
+                        };
+                    }
+
+                    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'items'), {
+                        type: aiResult.type || 'note',
+                        title: encryptData(aiResult.title, masterKey),
+                        content: encryptData(aiResult.content, masterKey),
+                        clientName: aiResult.clientName ? encryptData(aiResult.clientName, masterKey) : '',
+                        priority: aiResult.priority || 'medium',
+                        dueDate: aiResult.dueDate || null,
+                        status: 'pending',
+                        createdAt: serverTimestamp(),
+                        dateString: new Date().toLocaleDateString()
+                    });
+                    setInputText("");
+                } catch (error) {
+                    alert("Error: " + error.message);
+                } finally {
+                    setAiProcessing(false);
+                }
+            };
+
+            const deleteItem = async (id) => {
+                if(!confirm("Delete this item permanently?")) return;
+                await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'items', id));
+            };
+
+            const toggleStatus = async (id, status) => {
+                const newStatus = status === 'pending' ? 'done' : 'pending';
+                await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'items', id), { status: newStatus });
+            };
+
+            const saveSettings = (key) => {
+                localStorage.setItem('openai_api_key', key);
+                setApiKey(key);
+                alert("API Key Saved Successfully!");
+            };
+
+            // Loading Screen
+            if (loading) return (
+                <div className="h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
+                    <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mb-4"></div>
+                    <p className="text-sm tracking-wider">SECURE CONNECTION...</p>
+                </div>
+            );
+
+            // --- LOGIN SCREEN (GOOGLE) ---
+            if (!user) {
+                return (
+                    <div className="h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-6 text-center font-sans text-white">
+                        <div className="bg-white/10 backdrop-blur-lg p-8 rounded-2xl shadow-2xl max-w-md w-full border border-white/10">
+                            <div className="bg-blue-600/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 border border-blue-500/30">
+                                <ShieldCheck className="w-8 h-8 text-blue-400" />
+                            </div>
+                            <h1 className="text-2xl font-bold mb-2">Smart Credit Manager</h1>
+                            <p className="text-slate-400 mb-8 text-sm">Authorized Bank Personnel Only</p>
+                            
+                            {authError && (
+                                <div className="bg-red-500/20 text-red-200 p-4 rounded-lg text-sm mb-6 border border-red-500/30 text-left">
+                                    <div className="flex items-center gap-2 font-bold mb-1">
+                                        <AlertTriangle size={16} className="shrink-0"/> 
+                                        <span>Access Denied</span>
+                                    </div>
+                                    <p>{authError}</p>
+                                </div>
+                            )}
+
+                            <button 
+                                onClick={handleGoogleLogin}
+                                className="w-full bg-white hover:bg-gray-50 text-slate-900 font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-3 shadow-lg hover:shadow-xl hover:scale-[1.02]"
+                            >
+                                <svg className="w-5 h-5" viewBox="0 0 24 24">
+                                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                                </svg>
+                                Continue with Google
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // PIN Entry Screen
+            if (!isKeySet) {
+                return (
+                    <div className="h-screen flex flex-col items-center justify-center bg-slate-100 p-4 font-sans">
+                        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center relative border border-slate-200">
+                            <button onClick={handleLogout} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 transition-colors">
+                                <LogOut size={20}/>
+                            </button>
+                            <div className="bg-amber-100 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
+                                <Key className="w-8 h-8 text-amber-600" />
+                            </div>
+                            <h2 className="text-xl font-bold text-slate-800">Hello, {user.displayName?.split(' ')[0]}</h2>
+                            <p className="text-slate-500 mb-6 text-sm">Enter your secure PIN to decrypt data.</p>
+                            <form onSubmit={handleSetMasterKey}>
+                                <input 
+                                    type="password" 
+                                    className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 text-lg mb-4 text-center tracking-[0.5em] font-bold focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:tracking-normal"
+                                    placeholder="PIN"
+                                    value={masterKey}
+                                    onChange={(e) => setMasterKey(e.target.value)}
+                                    autoFocus
+                                />
+                                <button type="submit" className="w-full bg-slate-900 text-white py-3.5 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg hover:shadow-xl transform active:scale-95">
+                                    Unlock Vault
+                                </button>
+                            </form>
+                            <div className="mt-6 pt-4 border-t text-xs text-gray-400 flex justify-between items-center">
+                                <span>{user.email}</span>
+                                <span className="flex items-center gap-1 text-emerald-600 font-medium"><Lock size={10}/> Encrypted</span>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // MAIN DASHBOARD
+            return (
+                <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-slate-800">
+                    {/* SIDEBAR */}
+                    <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-slate-900 text-white transform transition-transform duration-300 shadow-2xl ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0`}>
+                        <div className="p-6 flex justify-between items-center border-b border-white/10">
+                            <h1 className="text-xl font-bold flex items-center gap-2 tracking-wider"><ShieldCheck className="text-blue-400"/> CM VAULT</h1>
+                            <button onClick={()=>setSidebarOpen(false)} className="md:hidden text-gray-400 hover:text-white"><X/></button>
+                        </div>
+                        
+                        <div className="p-4">
+                            <div className="bg-white/5 rounded-xl p-4 flex items-center gap-3 border border-white/5">
+                                <img src={user.photoURL} alt="User" className="w-10 h-10 rounded-full border-2 border-blue-500"/>
+                                <div className="overflow-hidden">
+                                    <p className="text-sm font-semibold truncate text-white">{user.displayName}</p>
+                                    <p className="text-xs text-slate-400 truncate">{user.email}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <nav className="mt-2 px-4 space-y-1">
+                            {[{id:'dashboard', icon:StickyNote, label:'Assignments'}, {id:'history', icon:History, label:'History'}, {id:'contacts', icon:Users, label:'Contacts'}, {id:'vault', icon:Lock, label:'Passwords'}].map(item => (
+                                <button key={item.id} onClick={()=>{setCurrentView(item.id); setSidebarOpen(false);}} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${currentView===item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                                    <div className="flex items-center gap-3">
+                                        <item.icon size={20}/> <span className="font-medium">{item.label}</span>
+                                    </div>
+                                    {currentView===item.id && <ChevronRight size={16}/>}
+                                </button>
+                            ))}
+                        </nav>
+                        
+                        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-white/10 bg-slate-900">
+                            <button onClick={()=>setCurrentView('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 ${currentView==='settings' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                                <Settings size={20}/> <span>AI Settings</span>
+                            </button>
+                            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-red-500/10 text-red-400 transition-colors">
+                                <LogOut size={20}/> <span>Sign Out</span>
+                            </button>
+                        </div>
+                    </aside>
+
+                    {/* MAIN */}
+                    <main className="flex-1 flex flex-col h-full relative bg-slate-50">
+                        <header className="bg-white border-b border-slate-200 p-4 flex justify-between items-center shadow-sm sticky top-0 z-10">
+                            <div className="flex items-center gap-3">
+                                <button onClick={()=>setSidebarOpen(true)} className="md:hidden p-2 hover:bg-slate-100 rounded-lg"><Menu/></button>
+                                <h2 className="font-bold capitalize text-xl text-slate-800">{currentView}</h2>
+                            </div>
+                            <div className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100 flex items-center gap-1">
+                                <Lock size={10}/> E2E ENCRYPTED
+                            </div>
+                        </header>
+
+                        <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-28">
+                            {/* DASHBOARD */}
+                            {currentView === 'dashboard' && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {items.filter(i => ['assignment','note'].includes(i.type)).map(item => (
+                                        <div key={item.id} className={`p-5 rounded-2xl border transition-all hover:shadow-md relative group ${item.status==='done' ? 'bg-slate-100 border-slate-200 opacity-60' : 'bg-white border-slate-200 shadow-sm'}`}>
+                                            <div className="flex justify-between items-start mb-2">
+                                                <span className={`text-[10px] uppercase font-bold px-2.5 py-1 rounded-full ${item.priority === 'high' ? 'bg-rose-100 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>{item.type}</span>
+                                                <button onClick={()=>deleteItem(item.id)} className="text-slate-300 hover:text-red-500 transition-colors"><X size={18}/></button>
+                                            </div>
+                                            <h3 className={`font-bold text-lg mb-1 ${item.status==='done' && 'line-through text-slate-500'}`}>{item.title}</h3>
+                                            <p className="text-sm text-slate-600 mb-4 leading-relaxed">{item.content}</p>
+                                            {item.clientName && (
+                                                <div className="mb-4 flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 p-2 rounded-lg">
+                                                    <Users size={14}/> {item.clientName}
+                                                </div>
+                                            )}
+                                            <button onClick={()=>toggleStatus(item.id, item.status)} className={`w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all ${item.status==='done' ? 'bg-slate-200 text-slate-600' : 'bg-slate-900 text-white hover:bg-slate-800'}`}>
+                                                {item.status==='done' ? <><CheckCircle size={16}/> Completed</> : "Mark as Done"}
+                                            </button>
+                                        </div>
+                                    ))}
+                                    {items.filter(i => ['assignment','note'].includes(i.type)).length === 0 && (
+                                        <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400">
+                                            <div className="bg-slate-100 p-6 rounded-full mb-4"><StickyNote size={40} className="text-slate-300"/></div>
+                                            <p>No active assignments. Use the Magic Input below.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* HISTORY */}
+                            {currentView === 'history' && (
+                                <div className="max-w-3xl mx-auto space-y-6">
+                                    {items.map(item => (
+                                        <div key={item.id} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                            <div className="flex items-start gap-4">
+                                                <div className={`p-3 rounded-full shrink-0 ${item.status==='done'?'bg-emerald-100 text-emerald-600':'bg-amber-100 text-amber-600'}`}>
+                                                    {item.status==='done' ? <CheckCircle size={20}/> : <Clock size={20}/>}
+                                                </div>
+                                                <div>
+                                                    <h4 className="font-bold text-slate-800">{item.title}</h4>
+                                                    <div className="text-xs text-slate-400 flex items-center gap-2 mt-1">
+                                                        <span>{item.dateString}</span> • <span className="capitalize">{item.type}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <span className={`px-3 py-1 rounded-full text-xs font-bold self-start md:self-center ${item.status==='done'?'bg-emerald-50 text-emerald-700 border border-emerald-100':'bg-amber-50 text-amber-700 border border-amber-100'}`}>{item.status}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                             {/* PASSWORDS */}
+                             {currentView === 'vault' && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {items.filter(i => i.type === 'password').map(item => (
+                                        <div key={item.id} className="bg-slate-800 text-slate-200 p-6 rounded-2xl relative group border border-slate-700 shadow-xl overflow-hidden">
+                                            <div className="absolute top-0 right-0 p-20 bg-blue-500/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
+                                            <button onClick={()=>deleteItem(item.id)} className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors z-10"><X size={18}/></button>
+                                            
+                                            <div className="flex items-center gap-2 mb-4 text-blue-400 font-bold text-xs uppercase tracking-widest">
+                                                <Key size={12}/> Credential
+                                            </div>
+                                            <h3 className="font-bold text-white text-lg mb-2">{item.title}</h3>
+                                            <div className="bg-slate-900/80 p-3 rounded-lg font-mono text-sm break-all border border-slate-700/50 relative z-10">
+                                                {item.content}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* SETTINGS */}
+                            {currentView === 'settings' && (
+                                <div className="max-w-md mx-auto bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
+                                    <div className="flex items-center gap-3 mb-6">
+                                        <div className="bg-purple-100 p-2 rounded-lg text-purple-600"><BrainCircuit size={24}/></div>
+                                        <h3 className="font-bold text-lg">AI Configuration</h3>
+                                    </div>
+                                    <label className="block text-sm font-medium text-slate-600 mb-2">OpenAI API Key</label>
+                                    <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none transition-all" placeholder="sk-..." />
+                                    <button onClick={()=>saveSettings(apiKey)} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">Save Configuration</button>
+                                    <p className="text-xs text-slate-400 mt-4 text-center">Key is stored locally in your browser.</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* MAGIC INPUT */}
+                        <div className="p-4 md:p-6 bg-white/80 backdrop-blur-md border-t border-slate-200 absolute bottom-0 left-0 right-0 z-20">
+                            <form onSubmit={handleMagicSubmit} className="relative max-w-3xl mx-auto shadow-2xl rounded-2xl">
+                                <textarea 
+                                    value={inputText} onChange={e=>setInputText(e.target.value)} disabled={aiProcessing}
+                                    placeholder={apiKey ? "Ask AI: 'Save login for BOB: user123', 'Task: Call Sharma ji tomorrow'..." : "Please configure API Key in Settings first"}
+                                    className="w-full bg-white border-0 rounded-2xl pl-6 pr-16 py-4 resize-none h-16 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm text-slate-700 placeholder:text-slate-400 text-base"
+                                />
+                                <button type="submit" disabled={!inputText || aiProcessing} className="absolute right-3 top-3 bottom-3 aspect-square bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 transition-all flex items-center justify-center">
+                                    {aiProcessing ? <div className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full"/> : <Send size={20}/>}
+                                </button>
+                            </form>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<MainApp />);
+    </script>
+</body>
+</html>
