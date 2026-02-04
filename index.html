@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Smart Credit Manager</title>
     <meta name="theme-color" content="#0f172a">
-    <link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiU21hcnQgQ3JlZGl0IE1hbmFnZXIiLCJzaG9ydF9uYW1lIjoiQ00gVmF1bHQiLCJzdGFydF91cmwiOiIvIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiIzBmMTcyYSIsInRoZW1lX2NvbG9yIjoiIzBmMTcyYSIsImljb25zIjpW11fQ==">
     
     <!-- 1. Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -34,10 +33,10 @@
         body { background-color: #f8fafc; touch-action: manipulation; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .animate-spin { animation: spin 1s linear infinite; }
-        /* Hide scrollbar for cleaner UI */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .glass-panel { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.5); }
     </style>
 </head>
 <body>
@@ -45,35 +44,22 @@
 
     <!-- MAIN REACT APPLICATION -->
     <script type="text/babel" data-type="module" data-presets="react">
-        import React, { useState, useEffect } from 'react';
+        import React, { useState, useEffect, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
         import { initializeApp } from 'firebase/app';
         import { 
-            getAuth, 
-            onAuthStateChanged, 
-            signInWithPopup,
-            GoogleAuthProvider,
-            signOut
+            getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut
         } from 'firebase/auth';
         import { 
-            getFirestore, 
-            collection, 
-            addDoc, 
-            query, 
-            orderBy, 
-            onSnapshot, 
-            updateDoc, 
-            doc, 
-            serverTimestamp, 
-            deleteDoc 
+            getFirestore, collection, addDoc, query, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, deleteDoc, getDoc, setDoc
         } from 'firebase/firestore';
         import { 
-            Lock, Unlock, Send, FileText, Users, Key, StickyNote, 
-            History, Settings, LogOut, Plus, ShieldCheck, BrainCircuit, 
-            X, Menu, CheckCircle, Clock, AlertTriangle, LogIn, ChevronRight
+            Lock, Unlock, Send, FileText, Users, Key, StickyNote, History, Settings, LogOut, 
+            ShieldCheck, BrainCircuit, X, Menu, CheckCircle, Clock, AlertTriangle, ChevronRight, 
+            Briefcase, Phone, CreditCard, FolderOpen, RefreshCw, Power
         } from 'lucide-react';
 
-        // --- 1. CONFIGURATION ---
+        // --- CONFIGURATION ---
         const firebaseConfig = {
             apiKey: "AIzaSyBz9bUrnOMu6I_OQ2cTHsRbVJUGlNs9c_E",
             authDomain: "wisfox-lead-app.firebaseapp.com",
@@ -83,420 +69,556 @@
             appId: "1:54162755199:web:80ebc15aae5584383bb94a"
         };
 
-        // --- SECURITY: ONLY THIS EMAIL CAN LOGIN ---
         const MY_ALLOWED_EMAIL = "nil000nilesh@gmail.com"; 
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = "credit-manager-v1"; 
+        const appId = "credit-manager-v2"; 
 
-        // --- 2. ENCRYPTION HELPERS ---
-        const encryptData = (text, masterKey) => {
-            if (!text || !masterKey || !window.CryptoJS) return text;
-            return window.CryptoJS.AES.encrypt(text, masterKey).toString();
+        // --- ENCRYPTION HELPERS ---
+        const encryptData = (text, pin) => {
+            if (!text || !pin || !window.CryptoJS) return text;
+            return window.CryptoJS.AES.encrypt(text, pin).toString();
         };
 
-        const decryptData = (cipherText, masterKey) => {
-            if (!cipherText || !masterKey || !window.CryptoJS) return cipherText;
+        const decryptData = (cipherText, pin) => {
+            if (!cipherText || !pin || !window.CryptoJS) return cipherText;
             try {
-                const bytes = window.CryptoJS.AES.decrypt(cipherText, masterKey);
+                const bytes = window.CryptoJS.AES.decrypt(cipherText, pin);
                 const originalText = bytes.toString(window.CryptoJS.enc.Utf8);
-                return originalText || '*** Encrypted ***';
+                return originalText || '';
             } catch (e) {
-                return '*** Error Decrypting ***';
+                return ''; 
             }
         };
 
-        // --- 3. AI LOGIC ---
-        const processWithAI = async (text, apiKey, masterKey) => {
+        // --- AI LOGIC ---
+        const processWithAI = async (text, apiKey, masterKey, existingClients) => {
             if (!apiKey) throw new Error("Please add OpenAI API Key in Settings");
 
+            const clientsList = existingClients.map(c => c.name).join(", ");
+            
             const systemPrompt = `
                 You are a smart assistant for a Bank Credit Manager. 
-                Analyze the user's unstructured text and categorize it.
-                Return ONLY a JSON object with this structure:
+                Existing Clients: [${clientsList}].
+                
+                Analyze the user's text.
+                1. If user mentions a NEW name with details (mobile, loan type), set action="create_client".
+                2. If user mentions an EXISTING client, set action="update_client".
+                3. Extract details: Name, Mobile, Account No, File Status (Login, Sanction, etc).
+                
+                Return JSON:
                 {
-                "type": "assignment" | "note" | "contact" | "password",
-                "title": "Short summary",
-                "content": "Detailed content",
-                "priority": "high" | "medium" | "low",
-                "dueDate": "YYYY-MM-DD" (if applicable, else null),
-                "clientName": "Name if mentioned" (else null),
-                "action": "create"
+                    "type": "assignment" | "note" | "contact" | "password",
+                    "action": "create_client" | "update_client" | "create_task",
+                    "title": "Short summary",
+                    "content": "Detailed content",
+                    "priority": "high" | "medium" | "low",
+                    "clientData": {
+                        "name": "Extracted Name",
+                        "mobile": "Extracted Mobile" (or null),
+                        "account": "Extracted Account" (or null),
+                        "status": "Login" | "Sanction" | "Disbursement" | "Audit" | "Closed",
+                        "remarks": "Any extra info"
+                    }
                 }
-                For passwords, just identify the username/password structure in content.
             `;
 
-            try {
-                const response = await fetch("https://api.openai.com/v1/chat/completions", {
+            const response = await fetch("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${apiKey}`
-                },
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
                 body: JSON.stringify({
                     model: "gpt-4o-mini",
                     messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: text }
+                        { role: "system", content: systemPrompt },
+                        { role: "user", content: text }
                     ],
                     response_format: { type: "json_object" }
                 })
-                });
-
-                const data = await response.json();
-                if(!data.choices) throw new Error("AI API Error: Check Key");
-                const result = JSON.parse(data.choices[0].message.content);
-                return result;
-            } catch (error) {
-                console.error("AI Error:", error);
-                throw error;
-            }
+            });
+            const data = await response.json();
+            return JSON.parse(data.choices[0].message.content);
         };
 
-        // --- 4. MAIN COMPONENT ---
+        // --- COMPONENTS ---
         const MainApp = () => {
             const [user, setUser] = useState(null);
-            const [masterKey, setMasterKey] = useState("");
-            const [isKeySet, setIsKeySet] = useState(false);
             const [loading, setLoading] = useState(true);
             const [authError, setAuthError] = useState(null);
             
+            // Security State
+            const [sessionPin, setSessionPin] = useState(null); 
+            const [masterKey, setMasterKey] = useState(null); 
+            const [securityMode, setSecurityMode] = useState('loading'); 
+            
+            // Data State
             const [currentView, setCurrentView] = useState('dashboard');
             const [items, setItems] = useState([]);
+            const [clients, setClients] = useState([]);
             const [inputText, setInputText] = useState("");
             const [aiProcessing, setAiProcessing] = useState(false);
             const [apiKey, setApiKey] = useState(localStorage.getItem('openai_api_key') || "");
             const [sidebarOpen, setSidebarOpen] = useState(false);
 
+            // Auto Logout Ref
+            const logoutTimerRef = useRef(null);
+
+            // Auth Listener
             useEffect(() => {
                 const unsubscribe = onAuthStateChanged(auth, (u) => {
-                    setLoading(false);
                     if (u) {
                         if (u.email !== MY_ALLOWED_EMAIL) {
-                            setAuthError(`Access Denied: ${u.email} is not authorized.`);
+                            setAuthError(`Access Denied: ${u.email}`);
                             signOut(auth);
-                            setUser(null);
                         } else {
                             setUser(u);
-                            setAuthError(null);
+                            checkSecurityStatus(u.uid);
                         }
                     } else {
                         setUser(null);
+                        setLoading(false);
+                        setMasterKey(null);
+                        setSessionPin(null);
                     }
                 });
                 return () => unsubscribe();
             }, []);
 
+            // Data Listeners
             useEffect(() => {
-                if (!user || !isKeySet) return;
-                const q = query(
-                    collection(db, 'artifacts', appId, 'users', user.uid, 'items'),
-                    orderBy('createdAt', 'desc')
-                );
-                const unsub = onSnapshot(q, (snapshot) => {
-                    const fetched = snapshot.docs.map(d => {
+                if (!user || !masterKey) return;
+
+                const qItems = query(collection(db, 'artifacts', appId, 'users', user.uid, 'items'), orderBy('createdAt', 'desc'));
+                const unsubItems = onSnapshot(qItems, (snap) => {
+                    setItems(snap.docs.map(d => {
                         const data = d.data();
                         return {
-                            id: d.id,
-                            ...data,
+                            id: d.id, ...data,
                             title: decryptData(data.title, masterKey),
                             content: decryptData(data.content, masterKey),
-                            clientName: data.clientName ? decryptData(data.clientName, masterKey) : ''
+                            clientName: decryptData(data.clientName, masterKey)
                         };
-                    });
-                    setItems(fetched);
+                    }));
                 });
-                return () => unsub();
-            }, [user, isKeySet, masterKey]);
 
-            const handleGoogleLogin = async () => {
-                const provider = new GoogleAuthProvider();
-                try {
-                    setAuthError(null);
-                    await signInWithPopup(auth, provider);
-                } catch (error) {
-                    console.error("Login Error:", error);
-                    let msg = error.message;
-                    if(error.code === 'auth/unauthorized-domain') msg = "Domain not authorized in Firebase Console.";
-                    setAuthError(msg);
+                const qClients = query(collection(db, 'artifacts', appId, 'users', user.uid, 'clients'), orderBy('updatedAt', 'desc'));
+                const unsubClients = onSnapshot(qClients, (snap) => {
+                    setClients(snap.docs.map(d => {
+                        const data = d.data();
+                        return {
+                            id: d.id, ...data,
+                            name: decryptData(data.name, masterKey),
+                            accountNo: decryptData(data.accountNo, masterKey),
+                            mobile: decryptData(data.mobile, masterKey),
+                            remarks: decryptData(data.remarks, masterKey)
+                        };
+                    }));
+                });
+
+                return () => { unsubItems(); unsubClients(); };
+            }, [user, masterKey]);
+
+            // --- AUTO LOGOUT LOGIC ---
+            useEffect(() => {
+                if (!user || !masterKey) return;
+
+                const resetTimer = () => {
+                    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+                    logoutTimerRef.current = setTimeout(() => {
+                        alert("Security Timeout: You have been logged out due to inactivity.");
+                        setMasterKey(null);
+                        setSessionPin(null);
+                        setSecurityMode('login'); // Lock screen instead of full signout
+                    }, 5 * 60 * 1000); // 5 Minutes
+                };
+
+                // Listen to events
+                window.addEventListener('mousemove', resetTimer);
+                window.addEventListener('keypress', resetTimer);
+                window.addEventListener('click', resetTimer);
+                window.addEventListener('scroll', resetTimer);
+                
+                resetTimer(); // Start timer
+
+                return () => {
+                    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+                    window.removeEventListener('mousemove', resetTimer);
+                    window.removeEventListener('keypress', resetTimer);
+                    window.removeEventListener('click', resetTimer);
+                    window.removeEventListener('scroll', resetTimer);
+                };
+            }, [user, masterKey]);
+
+
+            // --- SECURITY LOGIC ---
+            const checkSecurityStatus = async (uid) => {
+                const docRef = doc(db, 'artifacts', appId, 'users', uid, 'security', 'config');
+                const docSnap = await getDoc(docRef);
+                
+                if (!docSnap.exists()) {
+                    setSecurityMode('setup'); 
+                } else {
+                    const data = docSnap.data();
+                    const lastLoginDate = data.lastLoginDate;
+                    const today = new Date().toDateString();
+                    
+                    if (lastLoginDate !== today) {
+                        setSecurityMode('daily_reset'); 
+                    } else {
+                        setSecurityMode('login'); 
+                    }
+                }
+                setLoading(false);
+            };
+
+            const handlePinSetup = async (newPin, oldPinForRecovery = null) => {
+                if (!/^\d{4}$/.test(newPin)) { alert("PIN must be exactly 4 digits."); return; }
+
+                const uid = user.uid;
+                const docRef = doc(db, 'artifacts', appId, 'users', uid, 'security', 'config');
+                const docSnap = await getDoc(docRef);
+                
+                let history = [];
+                let newMasterKey = "";
+
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    history = data.pinHistory || [];
+                    
+                    if (history.includes(newPin)) {
+                        alert("Security Risk: You cannot use any of the last 5 PINs. Please choose a new one.");
+                        return;
+                    }
+
+                    if (securityMode === 'daily_reset') {
+                         if(!oldPinForRecovery) { alert("Enter yesterday's PIN to decrypt vault."); return; }
+                         const encryptedMaster = data.encryptedMasterKey;
+                         newMasterKey = decryptData(encryptedMaster, oldPinForRecovery);
+                         if (!newMasterKey) { alert("Wrong Old PIN. Cannot decrypt vault."); return; }
+                    }
+                } else {
+                    newMasterKey = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+                }
+
+                const encryptedMasterKey = encryptData(newMasterKey, newPin);
+
+                await setDoc(docRef, {
+                    encryptedMasterKey: encryptedMasterKey,
+                    lastLoginDate: new Date().toDateString(),
+                    pinHistory: [newPin, ...history].slice(0, 5) 
+                });
+
+                setMasterKey(newMasterKey);
+                setSessionPin(newPin);
+                setSecurityMode('active');
+            };
+
+            const handleLogin = async (inputPin) => {
+                const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'security', 'config');
+                const docSnap = await getDoc(docRef);
+                const data = docSnap.data();
+                
+                const decrypted = decryptData(data.encryptedMasterKey, inputPin);
+                if (decrypted) {
+                    setMasterKey(decrypted);
+                    setSessionPin(inputPin);
+                    setSecurityMode('active');
+                } else {
+                    alert("Wrong PIN!");
                 }
             };
 
-            const handleLogout = () => {
-                if(confirm("Sign out? Your PIN session will end.")){
-                    signOut(auth);
-                    setIsKeySet(false);
-                    setMasterKey("");
-                }
-            };
-
-            const handleSetMasterKey = (e) => {
+            // --- UI ACTIONS ---
+            const handleAddClient = async (e) => {
                 e.preventDefault();
-                if (masterKey.length < 4) {
-                    alert("PIN must be at least 4 digits");
-                    return;
-                }
-                setIsKeySet(true);
+                const form = e.target;
+                const newClient = {
+                    name: encryptData(form.name.value, masterKey),
+                    accountNo: encryptData(form.account.value, masterKey),
+                    mobile: encryptData(form.mobile.value, masterKey),
+                    fileStatus: form.status.value,
+                    fileLevel: form.level.value,
+                    remarks: encryptData(form.remarks.value, masterKey),
+                    updatedAt: serverTimestamp()
+                };
+                await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'clients'), newClient);
+                form.reset();
+                alert("Client File Created!");
             };
 
             const handleMagicSubmit = async (e) => {
                 e.preventDefault();
                 if (!inputText.trim()) return;
-                
                 setAiProcessing(true);
+                
                 try {
-                    let aiResult;
-                    if (apiKey) {
-                        aiResult = await processWithAI(inputText, apiKey, masterKey);
-                    } else {
-                        aiResult = {
-                            type: 'note',
-                            title: 'Quick Note',
-                            content: inputText,
-                            priority: 'medium',
-                            action: 'create'
+                    const aiResult = await processWithAI(inputText, apiKey, masterKey, clients);
+                    const cData = aiResult.clientData || {};
+
+                    // 1. AUTO CREATE CLIENT
+                    if (aiResult.action === 'create_client' && cData.name) {
+                        const newClient = {
+                            name: encryptData(cData.name, masterKey),
+                            accountNo: encryptData(cData.account || '', masterKey),
+                            mobile: encryptData(cData.mobile || '', masterKey),
+                            fileStatus: cData.status || 'Login',
+                            fileLevel: 'Branch Level',
+                            remarks: encryptData(cData.remarks || 'Created via AI', masterKey),
+                            updatedAt: serverTimestamp()
                         };
+                        await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'clients'), newClient);
                     }
 
-                    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'items'), {
-                        type: aiResult.type || 'note',
-                        title: encryptData(aiResult.title, masterKey),
-                        content: encryptData(aiResult.content, masterKey),
-                        clientName: aiResult.clientName ? encryptData(aiResult.clientName, masterKey) : '',
-                        priority: aiResult.priority || 'medium',
-                        dueDate: aiResult.dueDate || null,
-                        status: 'pending',
-                        createdAt: serverTimestamp(),
-                        dateString: new Date().toLocaleDateString()
-                    });
+                    // 2. AUTO UPDATE CLIENT
+                    if (aiResult.action === 'update_client' && cData.name) {
+                        const existing = clients.find(c => c.name.toLowerCase().includes(cData.name.toLowerCase()));
+                        if (existing) {
+                            const updates = { updatedAt: serverTimestamp() };
+                            if (cData.status) updates.fileStatus = cData.status;
+                            if (cData.mobile) updates.mobile = encryptData(cData.mobile, masterKey);
+                            await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'clients', existing.id), updates);
+                        }
+                    }
+                    
+                    // 3. CREATE TASK/NOTE
+                    if (aiResult.type !== 'client_update') {
+                        await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'items'), {
+                            type: aiResult.type || 'note',
+                            title: encryptData(aiResult.title, masterKey),
+                            content: encryptData(aiResult.content, masterKey),
+                            clientName: encryptData(cData.name || '', masterKey),
+                            priority: aiResult.priority || 'medium',
+                            status: 'pending',
+                            createdAt: serverTimestamp(),
+                            dateString: new Date().toLocaleDateString()
+                        });
+                    }
+                    
                     setInputText("");
                 } catch (error) {
-                    alert("Error: " + error.message);
+                    alert("AI Error: " + error.message);
                 } finally {
                     setAiProcessing(false);
                 }
             };
 
-            const deleteItem = async (id) => {
-                if(!confirm("Delete this item permanently?")) return;
-                await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'items', id));
+            const deleteItem = async (col, id) => {
+                if(confirm("Permanently delete?")) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id));
             };
 
-            const toggleStatus = async (id, status) => {
-                const newStatus = status === 'pending' ? 'done' : 'pending';
-                await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'items', id), { status: newStatus });
-            };
-
-            const saveSettings = (key) => {
-                localStorage.setItem('openai_api_key', key);
-                setApiKey(key);
-                alert("API Key Saved Successfully!");
-            };
-
-            // Loading Screen
+            // --- RENDER ---
             if (loading) return (
-                <div className="h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
-                    <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mb-4"></div>
-                    <p className="text-sm tracking-wider">SECURE CONNECTION...</p>
+                <div className="h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center text-white">
+                    <div className="flex flex-col items-center">
+                         <div className="animate-spin w-12 h-12 border-4 border-blue-500 rounded-full border-t-transparent mb-4"></div>
+                         <p className="tracking-widest text-sm text-blue-300">INITIALIZING VAULT...</p>
+                    </div>
                 </div>
             );
 
-            // --- LOGIN SCREEN (GOOGLE) ---
-            if (!user) {
-                return (
-                    <div className="h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-6 text-center font-sans text-white">
-                        <div className="bg-white/10 backdrop-blur-lg p-8 rounded-2xl shadow-2xl max-w-md w-full border border-white/10">
-                            <div className="bg-blue-600/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 border border-blue-500/30">
-                                <ShieldCheck className="w-8 h-8 text-blue-400" />
-                            </div>
-                            <h1 className="text-2xl font-bold mb-2">Smart Credit Manager</h1>
-                            <p className="text-slate-400 mb-8 text-sm">Authorized Bank Personnel Only</p>
-                            
-                            {authError && (
-                                <div className="bg-red-500/20 text-red-200 p-4 rounded-lg text-sm mb-6 border border-red-500/30 text-left">
-                                    <div className="flex items-center gap-2 font-bold mb-1">
-                                        <AlertTriangle size={16} className="shrink-0"/> 
-                                        <span>Access Denied</span>
-                                    </div>
-                                    <p>{authError}</p>
-                                </div>
-                            )}
+            if (!user) return (
+                <div className="h-screen bg-[url('https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=2029&auto=format&fit=crop')] bg-cover bg-center flex items-center justify-center p-4">
+                     <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm"></div>
+                     <div className="relative bg-white/10 backdrop-blur-xl border border-white/20 p-10 rounded-3xl shadow-2xl max-w-md w-full text-center">
+                         <div className="bg-blue-600 w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-500/50 transform rotate-3 hover:rotate-6 transition-all">
+                             <ShieldCheck size={40} className="text-white"/>
+                         </div>
+                         <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Smart Credit Manager</h1>
+                         <p className="text-blue-200 mb-8 font-light">Secure Banking Assistant & File Tracker</p>
+                         
+                         <button onClick={() => signInWithPopup(auth, new GoogleAuthProvider())} className="w-full bg-white text-slate-900 py-4 px-6 rounded-xl font-bold flex items-center justify-center gap-3 hover:bg-blue-50 hover:scale-[1.02] transition-all shadow-xl">
+                            <img src="https://www.google.com/favicon.ico" className="w-5 h-5"/> Sign in with Google
+                         </button>
+                         <p className="text-slate-400 text-xs mt-6">Authorized Personnel Only • Bank of Baroda</p>
+                         {authError && <p className="mt-4 p-2 bg-red-500/20 text-red-300 rounded text-sm">{authError}</p>}
+                     </div>
+                </div>
+            );
 
-                            <button 
-                                onClick={handleGoogleLogin}
-                                className="w-full bg-white hover:bg-gray-50 text-slate-900 font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-3 shadow-lg hover:shadow-xl hover:scale-[1.02]"
-                            >
-                                <svg className="w-5 h-5" viewBox="0 0 24 24">
-                                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                                </svg>
-                                Continue with Google
-                            </button>
-                        </div>
-                    </div>
-                );
-            }
+            // SECURITY SCREENS
+            if (securityMode === 'setup' || securityMode === 'daily_reset') return <PinSetupScreen onSet={handlePinSetup} mode={securityMode} />;
+            if (securityMode === 'login') return <LoginScreen onLogin={handleLogin} />;
 
-            // PIN Entry Screen
-            if (!isKeySet) {
-                return (
-                    <div className="h-screen flex flex-col items-center justify-center bg-slate-100 p-4 font-sans">
-                        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center relative border border-slate-200">
-                            <button onClick={handleLogout} className="absolute top-4 right-4 text-gray-400 hover:text-red-500 transition-colors">
-                                <LogOut size={20}/>
-                            </button>
-                            <div className="bg-amber-100 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-                                <Key className="w-8 h-8 text-amber-600" />
-                            </div>
-                            <h2 className="text-xl font-bold text-slate-800">Hello, {user.displayName?.split(' ')[0]}</h2>
-                            <p className="text-slate-500 mb-6 text-sm">Enter your secure PIN to decrypt data.</p>
-                            <form onSubmit={handleSetMasterKey}>
-                                <input 
-                                    type="password" 
-                                    className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 text-lg mb-4 text-center tracking-[0.5em] font-bold focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:tracking-normal"
-                                    placeholder="PIN"
-                                    value={masterKey}
-                                    onChange={(e) => setMasterKey(e.target.value)}
-                                    autoFocus
-                                />
-                                <button type="submit" className="w-full bg-slate-900 text-white py-3.5 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg hover:shadow-xl transform active:scale-95">
-                                    Unlock Vault
-                                </button>
-                            </form>
-                            <div className="mt-6 pt-4 border-t text-xs text-gray-400 flex justify-between items-center">
-                                <span>{user.email}</span>
-                                <span className="flex items-center gap-1 text-emerald-600 font-medium"><Lock size={10}/> Encrypted</span>
-                            </div>
-                        </div>
-                    </div>
-                );
-            }
-
-            // MAIN DASHBOARD
+            // MAIN APP
             return (
-                <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-slate-800">
+                <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden">
                     {/* SIDEBAR */}
-                    <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-slate-900 text-white transform transition-transform duration-300 shadow-2xl ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0`}>
-                        <div className="p-6 flex justify-between items-center border-b border-white/10">
-                            <h1 className="text-xl font-bold flex items-center gap-2 tracking-wider"><ShieldCheck className="text-blue-400"/> CM VAULT</h1>
-                            <button onClick={()=>setSidebarOpen(false)} className="md:hidden text-gray-400 hover:text-white"><X/></button>
+                    <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-slate-900 text-white transform transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0 flex flex-col shadow-2xl`}>
+                        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-slate-950">
+                            <h1 className="text-xl font-bold flex gap-2 tracking-wider"><Briefcase className="text-blue-500"/> CREDIT MGR</h1>
+                            <button onClick={()=>setSidebarOpen(false)} className="md:hidden"><X/></button>
                         </div>
                         
-                        <div className="p-4">
-                            <div className="bg-white/5 rounded-xl p-4 flex items-center gap-3 border border-white/5">
-                                <img src={user.photoURL} alt="User" className="w-10 h-10 rounded-full border-2 border-blue-500"/>
-                                <div className="overflow-hidden">
-                                    <p className="text-sm font-semibold truncate text-white">{user.displayName}</p>
-                                    <p className="text-xs text-slate-400 truncate">{user.email}</p>
-                                </div>
-                            </div>
+                        <div className="p-6 pb-2">
+                             <div className="glass-panel bg-white/5 border-white/10 rounded-xl p-4 flex items-center gap-3">
+                                 <img src={user.photoURL} className="w-10 h-10 rounded-full border-2 border-blue-500"/>
+                                 <div className="overflow-hidden">
+                                     <p className="text-sm font-bold truncate">{user.displayName}</p>
+                                     <p className="text-[10px] text-slate-400 truncate">Manager • Online</p>
+                                 </div>
+                             </div>
                         </div>
 
-                        <nav className="mt-2 px-4 space-y-1">
-                            {[{id:'dashboard', icon:StickyNote, label:'Assignments'}, {id:'history', icon:History, label:'History'}, {id:'contacts', icon:Users, label:'Contacts'}, {id:'vault', icon:Lock, label:'Passwords'}].map(item => (
-                                <button key={item.id} onClick={()=>{setCurrentView(item.id); setSidebarOpen(false);}} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${currentView===item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
-                                    <div className="flex items-center gap-3">
-                                        <item.icon size={20}/> <span className="font-medium">{item.label}</span>
-                                    </div>
-                                    {currentView===item.id && <ChevronRight size={16}/>}
-                                </button>
-                            ))}
+                        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+                            <NavBtn id="dashboard" icon={StickyNote} label="Assignments" current={currentView} set={setCurrentView}/>
+                            <NavBtn id="clients" icon={FolderOpen} label="Files / Clients" current={currentView} set={setCurrentView}/>
+                            <NavBtn id="history" icon={History} label="History" current={currentView} set={setCurrentView}/>
+                            <NavBtn id="vault" icon={Lock} label="Passwords" current={currentView} set={setCurrentView}/>
+                            <div className="pt-4 mt-4 border-t border-white/10">
+                                <NavBtn id="settings" icon={Settings} label="Settings" current={currentView} set={setCurrentView}/>
+                            </div>
                         </nav>
                         
-                        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-white/10 bg-slate-900">
-                            <button onClick={()=>setCurrentView('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 ${currentView==='settings' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
-                                <Settings size={20}/> <span>AI Settings</span>
-                            </button>
-                            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-red-500/10 text-red-400 transition-colors">
-                                <LogOut size={20}/> <span>Sign Out</span>
+                        <div className="p-4 bg-slate-950 border-t border-white/10">
+                            <button onClick={()=>{setSecurityMode('login'); setMasterKey(null);}} className="w-full flex items-center gap-3 text-slate-400 hover:text-white hover:bg-white/5 p-3 rounded-lg transition-all">
+                                <Power size={18}/> Lock Session
                             </button>
                         </div>
                     </aside>
 
-                    {/* MAIN */}
-                    <main className="flex-1 flex flex-col h-full relative bg-slate-50">
-                        <header className="bg-white border-b border-slate-200 p-4 flex justify-between items-center shadow-sm sticky top-0 z-10">
+                    {/* CONTENT */}
+                    <main className="flex-1 flex flex-col relative h-full bg-[#f1f5f9]">
+                        <header className="bg-white border-b border-slate-200 p-4 md:px-8 flex justify-between items-center shadow-sm sticky top-0 z-30">
                             <div className="flex items-center gap-3">
                                 <button onClick={()=>setSidebarOpen(true)} className="md:hidden p-2 hover:bg-slate-100 rounded-lg"><Menu/></button>
-                                <h2 className="font-bold capitalize text-xl text-slate-800">{currentView}</h2>
+                                <div>
+                                    <h2 className="font-bold capitalize text-2xl text-slate-800">{currentView === 'clients' ? 'Client Files' : currentView}</h2>
+                                    <p className="text-xs text-slate-500 hidden md:block">Manage your tasks and files securely</p>
+                                </div>
                             </div>
-                            <div className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100 flex items-center gap-1">
-                                <Lock size={10}/> E2E ENCRYPTED
+                            <div className="flex items-center gap-2 text-[10px] font-bold tracking-wider bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-full border border-emerald-200 shadow-sm">
+                                <ShieldCheck size={12}/> ENCRYPTED
                             </div>
                         </header>
 
-                        <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-28">
-                            {/* DASHBOARD */}
+                        <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-32">
+                            
+                            {/* DASHBOARD VIEW */}
                             {currentView === 'dashboard' && (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                                     {items.filter(i => ['assignment','note'].includes(i.type)).map(item => (
-                                        <div key={item.id} className={`p-5 rounded-2xl border transition-all hover:shadow-md relative group ${item.status==='done' ? 'bg-slate-100 border-slate-200 opacity-60' : 'bg-white border-slate-200 shadow-sm'}`}>
-                                            <div className="flex justify-between items-start mb-2">
-                                                <span className={`text-[10px] uppercase font-bold px-2.5 py-1 rounded-full ${item.priority === 'high' ? 'bg-rose-100 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>{item.type}</span>
-                                                <button onClick={()=>deleteItem(item.id)} className="text-slate-300 hover:text-red-500 transition-colors"><X size={18}/></button>
+                                        <div key={item.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-lg transition-all group relative">
+                                            <div className="flex justify-between items-start mb-3">
+                                                <span className={`text-[10px] px-2.5 py-1 rounded-full uppercase font-bold ${item.type==='assignment'?'bg-blue-50 text-blue-600':'bg-amber-50 text-amber-600'}`}>{item.type}</span>
+                                                <button onClick={()=>deleteItem('items', item.id)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><X size={16}/></button>
                                             </div>
-                                            <h3 className={`font-bold text-lg mb-1 ${item.status==='done' && 'line-through text-slate-500'}`}>{item.title}</h3>
-                                            <p className="text-sm text-slate-600 mb-4 leading-relaxed">{item.content}</p>
+                                            <h3 className={`font-bold text-lg mb-1 ${item.status==='done' && 'line-through text-slate-400'}`}>{item.title}</h3>
+                                            <p className="text-sm text-slate-500 mb-5 leading-relaxed">{item.content}</p>
+                                            
+                                            {/* Linked Client Info */}
                                             {item.clientName && (
-                                                <div className="mb-4 flex items-center gap-2 text-xs font-medium text-slate-500 bg-slate-50 p-2 rounded-lg">
-                                                    <Users size={14}/> {item.clientName}
+                                                <div className="mb-4 bg-slate-50 p-3 rounded-xl text-xs text-slate-700 flex items-center justify-between border border-slate-100">
+                                                    <div className="flex items-center gap-2 font-bold"><Users size={14} className="text-blue-500"/> {item.clientName}</div>
+                                                    {(() => {
+                                                        const client = clients.find(c => c.name === item.clientName);
+                                                        return client ? <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${getStatusColor(client.fileStatus)}`}>{client.fileStatus}</span> : null;
+                                                    })()}
                                                 </div>
                                             )}
-                                            <button onClick={()=>toggleStatus(item.id, item.status)} className={`w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all ${item.status==='done' ? 'bg-slate-200 text-slate-600' : 'bg-slate-900 text-white hover:bg-slate-800'}`}>
+
+                                            <button onClick={async()=>{
+                                                const newStatus = item.status === 'pending' ? 'done' : 'pending';
+                                                await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'items', item.id), { status: newStatus });
+                                            }} className={`w-full py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${item.status==='done'?'bg-slate-100 text-slate-500':'bg-slate-900 text-white hover:bg-slate-800 shadow-md'}`}>
                                                 {item.status==='done' ? <><CheckCircle size={16}/> Completed</> : "Mark as Done"}
                                             </button>
                                         </div>
                                     ))}
-                                    {items.filter(i => ['assignment','note'].includes(i.type)).length === 0 && (
-                                        <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400">
-                                            <div className="bg-slate-100 p-6 rounded-full mb-4"><StickyNote size={40} className="text-slate-300"/></div>
-                                            <p>No active assignments. Use the Magic Input below.</p>
+                                    {items.length === 0 && (
+                                        <div className="col-span-full text-center py-20 text-slate-400">
+                                            <div className="bg-white w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border"><StickyNote size={32} className="text-slate-300"/></div>
+                                            <p>No active tasks. Use the AI bar below.</p>
                                         </div>
                                     )}
                                 </div>
                             )}
 
-                            {/* HISTORY */}
-                            {currentView === 'history' && (
-                                <div className="max-w-3xl mx-auto space-y-6">
-                                    {items.map(item => (
-                                        <div key={item.id} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                            <div className="flex items-start gap-4">
-                                                <div className={`p-3 rounded-full shrink-0 ${item.status==='done'?'bg-emerald-100 text-emerald-600':'bg-amber-100 text-amber-600'}`}>
-                                                    {item.status==='done' ? <CheckCircle size={20}/> : <Clock size={20}/>}
-                                                </div>
-                                                <div>
-                                                    <h4 className="font-bold text-slate-800">{item.title}</h4>
-                                                    <div className="text-xs text-slate-400 flex items-center gap-2 mt-1">
-                                                        <span>{item.dateString}</span> • <span className="capitalize">{item.type}</span>
-                                                    </div>
-                                                </div>
+                            {/* CLIENTS VIEW */}
+                            {currentView === 'clients' && (
+                                <div className="space-y-8">
+                                    {/* Add Client Form */}
+                                    <div className="bg-white p-6 md:p-8 rounded-2xl border border-slate-200 shadow-sm">
+                                        <h3 className="font-bold mb-6 flex items-center gap-2 text-lg"><Plus className="bg-blue-100 text-blue-600 p-1 rounded-lg" size={28}/> New Client File</h3>
+                                        <form onSubmit={handleAddClient} className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase ml-1">Client Name</label>
+                                                <input name="name" placeholder="Name" required className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all" />
                                             </div>
-                                            <span className={`px-3 py-1 rounded-full text-xs font-bold self-start md:self-center ${item.status==='done'?'bg-emerald-50 text-emerald-700 border border-emerald-100':'bg-amber-50 text-amber-700 border border-amber-100'}`}>{item.status}</span>
-                                        </div>
-                                    ))}
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase ml-1">Account No</label>
+                                                <input name="account" placeholder="Acc No" className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all" />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase ml-1">Mobile</label>
+                                                <input name="mobile" placeholder="Mobile" className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all" />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase ml-1">Current Status</label>
+                                                <select name="status" className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all">
+                                                    <option>Login</option>
+                                                    <option>Sanction</option>
+                                                    <option>Disbursement</option>
+                                                    <option>Audit</option>
+                                                    <option>Closed</option>
+                                                </select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase ml-1">File Level</label>
+                                                <select name="level" className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all">
+                                                    <option>Branch Level</option>
+                                                    <option>RO Level</option>
+                                                    <option>HO Level</option>
+                                                </select>
+                                            </div>
+                                            <div className="md:col-span-2 space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase ml-1">Remarks / Address</label>
+                                                <input name="remarks" placeholder="Additional details..." className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all" />
+                                            </div>
+                                            <button className="md:col-span-2 bg-slate-900 text-white py-3.5 rounded-xl font-bold hover:bg-slate-800 shadow-lg hover:shadow-xl transition-all">Create File Record</button>
+                                        </form>
+                                    </div>
+
+                                    {/* Client List */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                        {clients.map(client => (
+                                            <div key={client.id} className="bg-white p-6 rounded-2xl border border-slate-200 hover:border-blue-400 transition-all shadow-sm group">
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-xl shadow-lg shadow-blue-500/30">
+                                                            {client.name.charAt(0)}
+                                                        </div>
+                                                        <div>
+                                                            <h4 className="font-bold text-lg text-slate-800">{client.name}</h4>
+                                                            <span className={`text-[10px] px-2.5 py-0.5 rounded-full uppercase font-bold border ${getStatusColor(client.fileStatus)}`}>
+                                                                {client.fileStatus}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <button onClick={()=>deleteItem('clients', client.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><X size={18}/></button>
+                                                </div>
+                                                
+                                                <div className="grid grid-cols-2 gap-3 text-sm text-slate-600 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                                                    <div className="flex items-center gap-2"><CreditCard size={14} className="text-slate-400"/> <span className="font-mono">{client.accountNo || '--'}</span></div>
+                                                    <div className="flex items-center gap-2"><Phone size={14} className="text-slate-400"/> <span className="font-mono">{client.mobile || '--'}</span></div>
+                                                    <div className="flex items-center gap-2 col-span-2"><FolderOpen size={14} className="text-slate-400"/> {client.fileLevel}</div>
+                                                </div>
+                                                {client.remarks && <p className="text-xs text-slate-500 mt-3 px-1 italic">"{client.remarks}"</p>}
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
 
-                             {/* PASSWORDS */}
-                             {currentView === 'vault' && (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {/* PASSWORDS */}
+                            {currentView === 'vault' && (
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                                     {items.filter(i => i.type === 'password').map(item => (
-                                        <div key={item.id} className="bg-slate-800 text-slate-200 p-6 rounded-2xl relative group border border-slate-700 shadow-xl overflow-hidden">
-                                            <div className="absolute top-0 right-0 p-20 bg-blue-500/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
-                                            <button onClick={()=>deleteItem(item.id)} className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors z-10"><X size={18}/></button>
-                                            
-                                            <div className="flex items-center gap-2 mb-4 text-blue-400 font-bold text-xs uppercase tracking-widest">
-                                                <Key size={12}/> Credential
-                                            </div>
+                                        <div key={item.id} className="bg-slate-800 text-slate-200 p-6 rounded-2xl relative group border border-slate-700 shadow-xl">
+                                            <button onClick={()=>deleteItem('items', item.id)} className="absolute top-4 right-4 text-slate-600 hover:text-white transition-colors"><X size={18}/></button>
+                                            <div className="flex items-center gap-2 text-blue-400 font-bold text-[10px] uppercase tracking-widest mb-3"><Key size={12}/> Credential</div>
                                             <h3 className="font-bold text-white text-lg mb-2">{item.title}</h3>
-                                            <div className="bg-slate-900/80 p-3 rounded-lg font-mono text-sm break-all border border-slate-700/50 relative z-10">
-                                                {item.content}
-                                            </div>
+                                            <div className="bg-slate-950 p-3 rounded-lg font-mono text-sm break-all border border-slate-700/50">{item.content}</div>
                                         </div>
                                     ))}
                                 </div>
@@ -507,32 +629,104 @@
                                 <div className="max-w-md mx-auto bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
                                     <div className="flex items-center gap-3 mb-6">
                                         <div className="bg-purple-100 p-2 rounded-lg text-purple-600"><BrainCircuit size={24}/></div>
-                                        <h3 className="font-bold text-lg">AI Configuration</h3>
+                                        <h3 className="font-bold text-lg">Configuration</h3>
                                     </div>
-                                    <label className="block text-sm font-medium text-slate-600 mb-2">OpenAI API Key</label>
-                                    <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none transition-all" placeholder="sk-..." />
-                                    <button onClick={()=>saveSettings(apiKey)} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">Save Configuration</button>
-                                    <p className="text-xs text-slate-400 mt-4 text-center">Key is stored locally in your browser.</p>
+                                    <label className="block text-sm font-bold text-slate-600 mb-2">OpenAI API Key</label>
+                                    <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl mb-4 focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all" placeholder="sk-..."/>
+                                    <button onClick={()=>{localStorage.setItem('openai_api_key', apiKey); alert("Saved")}} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all">Save Key</button>
                                 </div>
                             )}
+
                         </div>
 
                         {/* MAGIC INPUT */}
-                        <div className="p-4 md:p-6 bg-white/80 backdrop-blur-md border-t border-slate-200 absolute bottom-0 left-0 right-0 z-20">
+                        <div className="p-4 md:p-6 bg-white/80 backdrop-blur-xl border-t border-slate-200 sticky bottom-0 z-40">
                             <form onSubmit={handleMagicSubmit} className="relative max-w-3xl mx-auto shadow-2xl rounded-2xl">
                                 <textarea 
                                     value={inputText} onChange={e=>setInputText(e.target.value)} disabled={aiProcessing}
-                                    placeholder={apiKey ? "Ask AI: 'Save login for BOB: user123', 'Task: Call Sharma ji tomorrow'..." : "Please configure API Key in Settings first"}
-                                    className="w-full bg-white border-0 rounded-2xl pl-6 pr-16 py-4 resize-none h-16 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm text-slate-700 placeholder:text-slate-400 text-base"
+                                    placeholder={apiKey ? "Ask AI: 'New file for Suresh, 5L loan, mobile 98..', 'Update Suresh status to Sanction'" : "Connect OpenAI Key in Settings"}
+                                    className="w-full bg-white border-0 rounded-2xl pl-6 pr-16 py-4 h-16 resize-none focus:ring-2 ring-blue-500 outline-none text-slate-700 placeholder:text-slate-400 text-base"
                                 />
-                                <button type="submit" disabled={!inputText || aiProcessing} className="absolute right-3 top-3 bottom-3 aspect-square bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 transition-all flex items-center justify-center">
-                                    {aiProcessing ? <div className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full"/> : <Send size={20}/>}
+                                <button type="submit" disabled={!inputText || aiProcessing} className="absolute right-3 top-3 bottom-3 aspect-square bg-blue-600 text-white rounded-xl flex items-center justify-center hover:bg-blue-700 shadow-lg hover:shadow-blue-500/30 transition-all disabled:bg-slate-200">
+                                    {aiProcessing ? <div className="animate-spin w-5 h-5 border-2 border-white rounded-full border-t-transparent"/> : <Send size={20}/>}
                                 </button>
                             </form>
                         </div>
                     </main>
                 </div>
             );
+        };
+
+        // --- SUB SCREENS ---
+        const PinSetupScreen = ({ onSet, mode }) => {
+            const [p1, setP1] = useState('');
+            const [p2, setP2] = useState(''); 
+            
+            return (
+                <div className="h-screen bg-slate-50 flex items-center justify-center p-4">
+                    <div className="bg-white p-10 rounded-3xl shadow-2xl max-w-sm w-full text-center border border-slate-100">
+                        <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 text-blue-600 animate-pulse"><RefreshCw size={32}/></div>
+                        <h2 className="text-2xl font-bold mb-2 text-slate-800">{mode === 'setup' ? 'Set Daily PIN' : 'New Day Reset'}</h2>
+                        <p className="text-slate-500 mb-8 text-sm leading-relaxed">
+                            {mode === 'setup' ? 'Create a secure 4-digit PIN for today\'s session.' : 'For security, enter yesterday\'s PIN to unlock, then choose a NEW PIN.'}
+                        </p>
+                        
+                        <form onSubmit={(e)=>{e.preventDefault(); onSet(p1, p2)}} className="space-y-4">
+                            {mode === 'daily_reset' && (
+                                <input 
+                                    type="password" maxLength="4" placeholder="Old PIN"
+                                    value={p2} onChange={e=>setP2(e.target.value)}
+                                    className="w-full border-2 border-red-100 bg-red-50 rounded-xl p-4 text-center text-lg tracking-widest outline-none focus:border-red-400 focus:bg-white transition-all placeholder:tracking-normal"
+                                />
+                            )}
+                            <input 
+                                type="password" maxLength="4" placeholder="New PIN"
+                                value={p1} onChange={e=>setP1(e.target.value)}
+                                className="w-full border-2 border-blue-100 bg-blue-50 rounded-xl p-4 text-center text-lg tracking-widest outline-none focus:border-blue-400 focus:bg-white transition-all placeholder:tracking-normal font-bold"
+                            />
+                            <button className="w-full bg-slate-900 text-white py-4 rounded-xl font-bold hover:bg-slate-800 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all">
+                                {mode === 'setup' ? 'Secure My Vault' : 'Reset & Login'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )
+        };
+
+        const LoginScreen = ({ onLogin }) => {
+            const [pin, setPin] = useState('');
+            return (
+                <div className="h-screen bg-slate-50 flex items-center justify-center p-4">
+                    <div className="bg-white p-10 rounded-3xl shadow-2xl max-w-xs w-full text-center border border-slate-100">
+                        <div className="bg-amber-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 text-amber-600"><Lock size={28}/></div>
+                        <h2 className="text-xl font-bold mb-1 text-slate-800">Enter PIN</h2>
+                        <p className="text-slate-400 text-xs mb-8 uppercase tracking-widest font-bold">Session Locked</p>
+                        <form onSubmit={(e)=>{e.preventDefault(); onLogin(pin)}}>
+                            <input 
+                                type="password" maxLength="4" autoFocus
+                                value={pin} onChange={e=>setPin(e.target.value)}
+                                className="w-full bg-slate-50 border-2 border-slate-200 rounded-2xl p-4 text-center text-3xl tracking-[0.5em] font-bold mb-6 outline-none focus:border-blue-500 focus:bg-white transition-all text-slate-800"
+                            />
+                            <button className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 shadow-lg hover:shadow-blue-500/30 transition-all">Unlock</button>
+                        </form>
+                    </div>
+                </div>
+            )
+        };
+
+        const NavBtn = ({ id, icon: Icon, label, current, set }) => (
+            <button onClick={()=>set(id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${current===id ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                <Icon size={20}/> <span>{label}</span>
+                {current===id && <ChevronRight size={16} className="ml-auto opacity-50"/>}
+            </button>
+        );
+
+        const getStatusColor = (s) => {
+            if(s==='Login') return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+            if(s==='Sanction') return 'bg-purple-100 text-purple-700 border-purple-200';
+            if(s==='Disbursement') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+            if(s==='Audit') return 'bg-orange-100 text-orange-700 border-orange-200';
+            return 'bg-gray-100 text-gray-700 border-gray-200';
         };
 
         const root = createRoot(document.getElementById('root'));
