@@ -37,10 +37,19 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
         .glass-panel { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
-        .chat-bubble { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; margin-bottom: 8px; }
-        .chat-user { background-color: #2563eb; color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
+        .chat-bubble { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; margin-bottom: 8px; position: relative; }
+        .chat-user { background-color: #2563eb; color: white; align-self: flex-end; border-bottom-right-radius: 2px; box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2); }
         .chat-ai { background-color: #ffffff; color: #1e293b; align-self: flex-start; border: 1px solid #e2e8f0; border-bottom-left-radius: 2px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
         .chat-error { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; align-self: center; font-size: 12px; text-align: center; }
+        
+        /* Typing indicator animation */
+        .typing-dot {
+            width: 6px; height: 6px; background-color: #94a3b8; border-radius: 50%; display: inline-block;
+            animation: typing 1.4s infinite ease-in-out both;
+        }
+        .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+        .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes typing { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
     </style>
 </head>
 <body>
@@ -60,7 +69,7 @@
         import { 
             Lock, Unlock, Send, FileText, Users, Key, StickyNote, History, Settings, LogOut, 
             ShieldCheck, BrainCircuit, X, Menu, CheckCircle, Clock, AlertTriangle, ChevronRight, 
-            Briefcase, Phone, CreditCard, FolderOpen, RefreshCw, Power, MessageSquare, Bot
+            Briefcase, Phone, CreditCard, FolderOpen, RefreshCw, Power, MessageSquare, Bot, Loader2
         } from 'lucide-react';
 
         // --- CONFIGURATION ---
@@ -76,7 +85,6 @@
         const MY_ALLOWED_EMAIL = "nil000nilesh@gmail.com"; 
         
         // --- 🔴 IMPORTANT: Use Settings Menu to add key ---
-        // Do not hardcode here for GitHub safety
         const FIXED_OPENAI_KEY = ""; 
 
         const app = initializeApp(firebaseConfig);
@@ -109,16 +117,13 @@
             
             const systemPrompt = `
                 You are a smart assistant for a Bank Credit Manager.
-                
                 CURRENT DATABASE CLIENTS: [${clientsList}].
-                
                 YOUR GOAL: Organize data into the database.
-                
                 INSTRUCTIONS:
-                1. Analyze the conversation history.
-                2. If the user's request is ambiguous (e.g., "Update Sharma" but there are multiple Sharmas or no Sharma), ASK a clarifying question.
-                3. If the user mentions a NEW name, ask for confirmation/details before creating, OR if they provided details (Mobile/Loan amt), go ahead and create.
-                4. Only when you have clear details, output a JSON object. Otherwise, output plain text (the question).
+                1. Analyze conversation history.
+                2. If ambiguous, ASK clarifying question.
+                3. If creating new client, ask for details unless provided.
+                4. Only when clear, output JSON action. Otherwise, output plain text question.
                 
                 JSON FORMAT (Only when executing action):
                 {
@@ -139,9 +144,6 @@
                         }
                     }
                 }
-                
-                PLAIN TEXT FORMAT (When asking question):
-                "Just type the question here..."
             `;
 
             // Convert chat history for OpenAI
@@ -161,7 +163,6 @@
             
             const data = await response.json();
             
-            // ERROR HANDLING IF API FAILS
             if (!response.ok) {
                 throw new Error(data.error?.message || "OpenAI Connection Failed");
             }
@@ -169,11 +170,9 @@
             const content = data.choices[0].message.content;
 
             try {
-                // Try to parse JSON (Action)
                 const jsonAction = JSON.parse(content);
                 if (jsonAction.isAction) return { type: 'action', payload: jsonAction };
             } catch (e) {
-                // It's a text response (Question)
                 return { type: 'question', text: content };
             }
             return { type: 'question', text: content };
@@ -205,6 +204,7 @@
             const [apiKey, setApiKey] = useState(FIXED_OPENAI_KEY || localStorage.getItem('openai_api_key') || "");
             const [sidebarOpen, setSidebarOpen] = useState(false);
             const chatEndRef = useRef(null);
+            const chatInputRef = useRef(null);
 
             // Auto Logout Ref
             const logoutTimerRef = useRef(null);
@@ -233,7 +233,14 @@
             // Scroll Chat
             useEffect(() => {
                 chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-            }, [chatHistory, chatOpen]);
+            }, [chatHistory, chatOpen, aiProcessing]);
+
+            // Focus Input on Chat Open
+            useEffect(() => {
+                if (chatOpen && !aiProcessing && chatInputRef.current) {
+                    chatInputRef.current.focus();
+                }
+            }, [chatOpen, aiProcessing]);
 
             // Data Listeners
             useEffect(() => {
@@ -394,11 +401,9 @@
                     const result = await processWithChatAI(updatedHistory, apiKey, masterKey, clients);
                     
                     if (result.type === 'question') {
-                        // AI asks clarification
                         setChatHistory(prev => [...prev, { role: 'ai', text: result.text }]);
                     } 
                     else if (result.type === 'action') {
-                        // AI executes
                         const payload = result.payload.data;
                         const cData = payload.clientData || {};
                         const message = result.payload.responseMessage || "Task completed.";
@@ -445,7 +450,6 @@
 
                 } catch (error) {
                     setChatHistory(prev => [...prev, { role: 'ai', text: `Error: ${error.message}.` }]);
-                    // Add specific help for missing key
                     if (error.message.includes("Key")) {
                         setChatHistory(prev => [...prev, { role: 'ai', text: "⚠️ TIP: Go to Settings tab and paste your API Key." }]);
                     }
@@ -544,7 +548,7 @@
                             )}
                         </div>
 
-                        {/* CHAT INTERFACE (Replaces Magic Input) */}
+                        {/* CHAT INTERFACE */}
                         <div className={`fixed bottom-0 right-0 left-0 md:left-72 bg-white border-t border-slate-200 shadow-2xl transition-all duration-300 z-40 ${chatOpen ? 'h-[500px]' : 'h-16'}`}>
                             {/* Chat Header */}
                             <div 
@@ -572,8 +576,13 @@
                                         </div>
                                     ))}
                                     {aiProcessing && (
-                                        <div className="flex items-center gap-2 text-xs text-slate-400 ml-2">
-                                            <div className="animate-spin w-3 h-3 border-2 border-blue-500 rounded-full border-t-transparent"/> AI is thinking...
+                                        <div className="flex flex-col items-start space-y-1">
+                                            <div className="chat-bubble chat-ai flex items-center gap-2 text-slate-500">
+                                                <div className="flex gap-1">
+                                                    <div className="typing-dot"></div><div className="typing-dot"></div><div className="typing-dot"></div>
+                                                </div>
+                                                <span className="text-xs">AI is thinking...</span>
+                                            </div>
                                         </div>
                                     )}
                                     <div ref={chatEndRef}></div>
@@ -584,12 +593,14 @@
                             <div className="absolute bottom-0 left-0 right-0 p-3 bg-white border-t border-slate-100">
                                 <form onSubmit={handleChatSubmit} className="relative">
                                     <input 
-                                        value={inputText} onChange={e=>setInputText(e.target.value)} disabled={aiProcessing}
-                                        placeholder="Type here... (e.g., 'New file for Ramesh')"
-                                        className="w-full bg-slate-100 border-0 rounded-full pl-5 pr-14 py-3 focus:ring-2 ring-blue-500 outline-none text-slate-700"
+                                        ref={chatInputRef}
+                                        value={inputText} onChange={e=>setInputText(e.target.value)} 
+                                        disabled={aiProcessing}
+                                        placeholder={aiProcessing ? "AI is processing..." : "Type here... (e.g., 'New file for Ramesh')"}
+                                        className={`w-full bg-slate-100 border-0 rounded-full pl-5 pr-14 py-3 focus:ring-2 ring-blue-500 outline-none text-slate-700 transition-all ${aiProcessing ? 'opacity-70 cursor-wait' : ''}`}
                                     />
                                     <button type="submit" disabled={!inputText || aiProcessing} className="absolute right-2 top-1.5 p-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition disabled:bg-slate-300">
-                                        <Send size={16}/>
+                                        {aiProcessing ? <Loader2 className="animate-spin" size={16}/> : <Send size={16}/>}
                                     </button>
                                 </form>
                             </div>
@@ -694,7 +705,7 @@
             </div>
         );
 
-        // Security Screens (Simplified for brevity as they are same as before)
+        // Security Screens
         const PinSetupScreen = ({ onSet, mode }) => {
             const [p1, setP1] = useState(''); const [p2, setP2] = useState('');
             return (
@@ -727,7 +738,7 @@
         };
 
         const NavBtn = ({ id, icon: Icon, label, current, set }) => (
-            <button onClick={()=>set(id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${current===id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+            <button onClick={()=>{set(id); if(id==='settings') setTimeout(()=>alert('To add API Key, go to Settings'),100)}} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${current===id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
                 <Icon size={20}/> <span>{label}</span>
                 {current===id && <ChevronRight size={16} className="ml-auto opacity-50"/>}
             </button>
