@@ -109,6 +109,40 @@
             }
         };
 
+        const extractJsonPayload = (content) => {
+            if (!content) return null;
+            const trimmed = content.trim();
+            const fencedMatch = trimmed.match(/```json\s*([\s\S]*?)```/i);
+            if (fencedMatch?.[1]) {
+                try {
+                    return JSON.parse(fencedMatch[1].trim());
+                } catch (innerError) {
+                    return null;
+                }
+            }
+            try {
+                return JSON.parse(trimmed);
+            } catch (e) {
+                const text = trimmed;
+                for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
+                    let depth = 0;
+                    for (let i = start; i < text.length; i += 1) {
+                        if (text[i] === '{') depth += 1;
+                        if (text[i] === '}') depth -= 1;
+                        if (depth === 0) {
+                            const candidate = text.slice(start, i + 1);
+                            try {
+                                return JSON.parse(candidate);
+                            } catch (innerError) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        };
+
         // --- SMART AI LOGIC (Conversational) ---
         const processWithChatAI = async (chatHistory, apiKey, masterKey, existingClients) => {
             if (!apiKey) throw new Error("API Key Missing. Go to Settings tab to add it.");
@@ -123,12 +157,12 @@
                 1. Analyze conversation history.
                 2. If ambiguous, ASK clarifying question.
                 3. If creating new client, ask for details unless provided.
-                4. Only when clear, output JSON action. Otherwise, output plain text question.
+                4. Always respond with a single JSON object only. Do not wrap it in code fences or extra text.
                 
-                JSON FORMAT (Only when executing action):
+                JSON FORMAT:
                 {
-                    "isAction": true,
-                    "responseMessage": "Success message to show user",
+                    "isAction": true | false,
+                    "responseMessage": "If isAction is false, write the question here. If true, write success message.",
                     "data": {
                         "type": "assignment" | "note" | "contact" | "password",
                         "action": "create_client" | "update_client" | "create_task",
@@ -162,7 +196,8 @@
                     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
                     body: JSON.stringify({
                         model: "gpt-4o-mini",
-                        messages: messages
+                        messages: messages,
+                        temperature: 0.2
                     }),
                     signal: controller.signal
                 });
@@ -174,14 +209,18 @@
                     throw new Error(data.error?.message || "OpenAI Connection Failed");
                 }
 
-                const content = data.choices[0].message.content;
+                const content = data.choices[0]?.message?.content?.trim() || "";
+                const jsonAction = extractJsonPayload(content);
 
-                try {
-                    const jsonAction = JSON.parse(content);
+                if (jsonAction) {
                     if (jsonAction.isAction) return { type: 'action', payload: jsonAction };
-                } catch (e) {
-                    return { type: 'question', text: content };
+                    if (jsonAction.responseMessage) return { type: 'question', text: jsonAction.responseMessage };
                 }
+
+                if (!content) {
+                    return { type: 'question', text: "AI response empty. Please try again." };
+                }
+
                 return { type: 'question', text: content };
             } catch (error) {
                 if (error.name === 'AbortError') {
@@ -414,12 +453,13 @@
                     const result = await processWithChatAI(updatedHistory, apiKey, masterKey, clients);
                     
                     if (result.type === 'question') {
-                        setChatHistory(prev => [...prev, { role: 'ai', text: result.text }]);
+                        const questionText = result.text || "Need more details to proceed.";
+                        setChatHistory(prev => [...prev, { role: 'ai', text: questionText }]);
                     } 
                     else if (result.type === 'action') {
-                        const payload = result.payload.data;
+                        const payload = result.payload?.data || {};
                         const cData = payload.clientData || {};
-                        const message = result.payload.responseMessage || "Task completed.";
+                        const message = result.payload?.responseMessage || "Task completed.";
 
                         // 1. Client Actions
                         if (payload.action === 'create_client' && cData.name) {
@@ -445,7 +485,8 @@
                         }
 
                         // 2. Task Actions
-                        if (payload.type !== 'contact') {
+                        const shouldCreateTaskItem = payload.type && (payload.title || payload.content);
+                        if (payload.action === 'create_task' || (shouldCreateTaskItem && payload.type !== 'contact')) {
                              await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'items'), {
                                 type: payload.type || 'note',
                                 title: encryptData(payload.title, masterKey),
@@ -762,4 +803,3 @@
     </script>
 </body>
 </html>
-
