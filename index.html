@@ -85,7 +85,16 @@
         const MY_ALLOWED_EMAIL = "nil000nilesh@gmail.com"; 
         
         // --- 🔴 IMPORTANT: Use Settings Menu to add key ---
-        const FIXED_OPENAI_KEY = ""; 
+        const FIXED_OPENAI_KEY = "";
+
+        const FREE_STACK_STEPS = [
+            "GitHub: is project ko new public/private repo me push karo.",
+            "Firebase: Spark plan pe naya project banao, Authentication (Google) + Firestore enable karo.",
+            "Firebase Rules: sirf authenticated user read/write kare, production me role based rules add karo.",
+            "Vercel: GitHub repo import karo, framework preset = Other, output static deploy hone do.",
+            "OpenAI Key: Settings me API key save karo (browser localStorage) ya Vercel serverless proxy se secure call karo.",
+            "Daily backup: Firestore export schedule ya manual JSON export weekly run karo."
+        ];
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
@@ -590,14 +599,24 @@
                             {currentView === 'vault' && <VaultView items={items} deleteItem={deleteItem} />}
                             {currentView === 'history' && <HistoryView items={items} />}
                             {currentView === 'settings' && (
-                                <div className="max-w-md mx-auto bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
+                                <div className="max-w-2xl mx-auto bg-white p-8 rounded-2xl border border-slate-200 shadow-sm space-y-8">
                                     <div className="flex items-center gap-3 mb-6">
                                         <div className="bg-purple-100 p-2 rounded-lg text-purple-600"><BrainCircuit size={24}/></div>
                                         <h3 className="font-bold text-lg">Configuration</h3>
                                     </div>
-                                    <label className="block text-sm font-bold text-slate-600 mb-2">OpenAI API Key</label>
-                                    <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl mb-4 focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all" placeholder="sk-..."/>
-                                    <button onClick={()=>{localStorage.setItem('openai_api_key', apiKey); alert("Saved")}} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all">Save Key</button>
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-600 mb-2">OpenAI API Key</label>
+                                        <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} className="w-full border border-slate-200 bg-slate-50 p-3 rounded-xl mb-4 focus:bg-white focus:ring-2 ring-blue-500 outline-none transition-all" placeholder="sk-..."/>
+                                        <button onClick={()=>{localStorage.setItem('openai_api_key', apiKey); alert("Saved")}} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all">Save Key</button>
+                                        <p className="text-xs text-slate-500 mt-2">Free setup ke liye key Vercel serverless function ke through proxy karna safer hai.</p>
+                                    </div>
+
+                                    <div className="border border-slate-200 rounded-xl p-5 bg-slate-50">
+                                        <h4 className="font-bold text-slate-800 mb-3">Free Launch Plan (GitHub + Vercel + Firebase)</h4>
+                                        <ol className="space-y-2 text-sm text-slate-700 list-decimal pl-5">
+                                            {FREE_STACK_STEPS.map((step, idx) => <li key={idx}>{step}</li>)}
+                                        </ol>
+                                    </div>
                                 </div>
                             )}
                         </div>
